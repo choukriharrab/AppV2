@@ -17,6 +17,8 @@ import java.util.regex.Pattern;
 
 import com.example.UsersMS.Utils.Task;
 import lombok.AllArgsConstructor;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -30,11 +32,22 @@ import org.springframework.web.bind.annotation.PathVariable;
 public class UserServiceImp implements UserService{
     @Autowired
     private final UserRepo userRepo;
-    private List<User> users;
+
     @Autowired
     TaskClient taskClient;
 
+    @Autowired
+    private RabbitTemplate rabbitTemplate;
+    @RabbitListener(queues = "isUserIdExistQueue")
+    public ResponseEntity<?> receiveAnswer(Long userId) throws NotFoundException {
+        if (userRepo.existsById(userId)) {
+            return new ResponseEntity<>(true, HttpStatus.OK);
+        }else {
+            rabbitTemplate.convertAndSend("tasksExchange", "tasksRouting", userId);
+            throw new NotFoundException("User with id: "+userId+" NOT found!");
+        }
 
+    }
 
     @Override
     public List<UserResponseDto> getAllUsers() throws NotFoundException {
@@ -67,17 +80,18 @@ public class UserServiceImp implements UserService{
     }
     @Override
     @Transactional
-    public void deleteUser(Long id) throws NotFoundException, EmptyEntryException {
-        if (id == null||id<=0){
-            throw new EmptyEntryException("Empty Input!" +id);
+    public void deleteUser(Long userId) throws NotFoundException, EmptyEntryException {
+        if (userId == null||userId<=0){
+            throw new EmptyEntryException("Empty Input!" +userId);
         }
-        if(!userRepo.existsById(id)){
-            throw new NotFoundException("User with id: "+id+" NOT found!");
+
+        if(!userRepo.existsById(userId)){
+            throw new NotFoundException("User with id: "+userId+" NOT found!");
         }
-        for (int i = 0; i < taskClient.findByUserId(id).size(); i++) {
-            taskClient.findByUserId(id);
-        }
-        userRepo.deleteUserById(id);
+
+        userRepo.deleteUserById(userId);
+        rabbitTemplate.convertAndSend("tasksExchange", "tasksRouting", userId);
+
     }
     @Override
     public UserResponseDto updateUser(Long id, UserRequestDto userDto) throws NotFoundException {
